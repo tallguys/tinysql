@@ -132,13 +132,14 @@ func (s *testTableCodecSuite) TestRecordKey(c *C) {
 	c.Assert(err, NotNil)
 	_, _, err = DecodeRecordKey([]byte("abcdefghijklmnopqrstuvwxyz"))
 	c.Assert(err, NotNil)
-	c.Assert(DecodeTableID(nil), Equals, int64(0))
+	tTableID, _ = DecodeTableID(nil)
+	c.Assert(tTableID, Equals, int64(0))
 }
 
 func (s *testTableCodecSuite) TestPrefix(c *C) {
 	const tableID int64 = 66
 	key := EncodeTablePrefix(tableID)
-	tTableID := DecodeTableID(key)
+	tTableID, _ := DecodeTableID(key)
 	c.Assert(tTableID, Equals, int64(tableID))
 
 	c.Assert([]byte(TablePrefix()), BytesEquals, tablePrefix)
@@ -154,7 +155,8 @@ func (s *testTableCodecSuite) TestPrefix(c *C) {
 	c.Assert(isRecordKey, IsFalse)
 
 	prefixKey := GenTableIndexPrefix(tableID)
-	c.Assert(DecodeTableID(prefixKey), Equals, tableID)
+	tTableID, _ = DecodeTableID(prefixKey)
+	c.Assert(tTableID, Equals, tableID)
 
 	c.Assert(TruncateToRowKeyLen(append(indexPrefix, "xyz"...)), HasLen, RecordRowKeyLen)
 	c.Assert(TruncateToRowKeyLen(key), HasLen, len(key))

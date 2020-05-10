@@ -37,16 +37,16 @@ var (
 )
 
 const (
-	idLen     = 8
-	prefixLen = 1 + idLen /*tableID*/ + 2
-	// RecordRowKeyLen is public for calculating avgerage row size.
-	RecordRowKeyLen       = prefixLen + idLen /*handle*/
-	tablePrefixLength     = 1
-	recordPrefixSepLength = 2
+	int64Len  = 8
+	prefixLen = 1 + int64Len /*tableID*/ + 2
+	// RecordRowKeyLen is public for calculating average row size.
+	RecordRowKeyLen      = prefixLen + int64Len /*handle*/
+	tablePrefixLength    = 1
+	indexPrefixSepLength = 2
 )
 
 // TableSplitKeyLen is the length of key 't{table_id}' which is used for table split.
-const TableSplitKeyLen = 1 + idLen
+const TableSplitKeyLen = 1 + int64Len
 
 // TablePrefix returns table's prefix 't'.
 func TablePrefix() []byte {
@@ -70,9 +70,19 @@ func EncodeRowKeyWithHandle(tableID int64, handle int64) kv.Key {
 }
 
 // DecodeRecordKey decodes the key and gets the tableID, handle.
+// t{tableID}_r{rowID}
 func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, err error) {
-	/* Your code here */
-	return
+	tableID, err = DecodeTableID(key)
+	if err != nil {
+		return 0, 0, errInvalidIndexKey.GenWithStack("invalid index key - %q %v", key, err)
+	}
+
+	_, handle, err = codec.DecodeInt(key[prefixLen:])
+	if err != nil {
+		return 0, 0, errInvalidIndexKey.GenWithStack("invalid index key - %q %v", key, err)
+	}
+
+	return tableID, handle, nil
 }
 
 // appendTableIndexPrefix appends table index prefix  "t[tableID]_i".
@@ -93,8 +103,20 @@ func EncodeIndexSeekKey(tableID int64, idxID int64, encodedValue []byte) kv.Key 
 }
 
 // DecodeIndexKeyPrefix decodes the key and gets the tableID, indexID, indexValues.
+// t{tableID}_i{indexID}_{indexedColumnsValue}
 func DecodeIndexKeyPrefix(key kv.Key) (tableID int64, indexID int64, indexValues []byte, err error) {
-	/* Your code here */
+	tableID, err = DecodeTableID(key)
+	if err != nil {
+		return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q %v", key, err)
+	}
+
+	remain, indexID, err := codec.DecodeInt(key[tablePrefixLength+int64Len+indexPrefixSepLength:])
+	if err != nil {
+		return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q %v", key, err)
+	}
+
+	indexValues = remain
+
 	return tableID, indexID, indexValues, nil
 }
 
@@ -119,7 +141,7 @@ func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []str
 		indexValues = append(indexValues, str)
 		key = remain
 	}
-	return
+	return tableID, indexID, indexValues, err
 }
 
 // EncodeRow encode row data and column ids into a slice of byte.
@@ -148,7 +170,7 @@ func CutRowKeyPrefix(key kv.Key) []byte {
 
 // EncodeRecordKey encodes the recordPrefix, row handle into a kv.Key.
 func EncodeRecordKey(recordPrefix kv.Key, h int64) kv.Key {
-	buf := make([]byte, 0, len(recordPrefix)+idLen)
+	buf := make([]byte, 0, len(recordPrefix)+int64Len)
 	buf = append(buf, recordPrefix...)
 	buf = codec.EncodeInt(buf, h)
 	return buf
@@ -220,15 +242,16 @@ func DecodeKeyHead(key kv.Key) (tableID int64, indexID int64, isRecordKey bool, 
 }
 
 // DecodeTableID decodes the table ID of the key, if the key is not table key, returns 0.
-func DecodeTableID(key kv.Key) int64 {
+func DecodeTableID(key kv.Key) (tableID int64, err error) {
 	if !key.HasPrefix(tablePrefix) {
-		return 0
+		return 0, errInvalidKey.GenWithStack("invalid key - %q without table prefix", key)
 	}
-	key = key[len(tablePrefix):]
-	_, tableID, err := codec.DecodeInt(key)
-	// TODO: return error.
-	terror.Log(errors.Trace(err))
-	return tableID
+	key = key[tablePrefixLength:]
+	_, tableID, err = codec.DecodeInt(key)
+	if err != nil {
+		return 0, errInvalidKey.GenWithStack("invalid key - %q %v", key)
+	}
+	return tableID, nil
 }
 
 // DecodeRowKey decodes the key and gets the handle.
@@ -355,7 +378,7 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 // The returned value b is the remaining bytes of the key which would be empty if it is unique index or handle data
 // if it is non-unique index.
 func CutIndexKey(key kv.Key, colIDs []int64) (values map[int64][]byte, b []byte, err error) {
-	b = key[prefixLen+idLen:]
+	b = key[prefixLen+int64Len:]
 	values = make(map[int64][]byte)
 	for _, id := range colIDs {
 		var val []byte
@@ -370,14 +393,14 @@ func CutIndexKey(key kv.Key, colIDs []int64) (values map[int64][]byte, b []byte,
 
 // CutIndexPrefix cuts the index prefix.
 func CutIndexPrefix(key kv.Key) []byte {
-	return key[prefixLen+idLen:]
+	return key[prefixLen+int64Len:]
 }
 
 // CutIndexKeyNew cuts encoded index key into colIDs to bytes slices.
 // The returned value b is the remaining bytes of the key which would be empty if it is unique index or handle data
 // if it is non-unique index.
 func CutIndexKeyNew(key kv.Key, length int) (values [][]byte, b []byte, err error) {
-	b = key[prefixLen+idLen:]
+	b = key[prefixLen+int64Len:]
 	values = make([][]byte, 0, length)
 	for i := 0; i < length; i++ {
 		var val []byte
